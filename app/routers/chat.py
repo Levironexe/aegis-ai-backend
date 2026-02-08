@@ -76,9 +76,27 @@ async def generate_chat_title(user_message_text: str) -> str:
 
 async def get_current_user_or_guest(request: Request, db: AsyncSession = Depends(get_db)) -> User:
     """Get current authenticated user or create/return guest user"""
+    # First check X-User-Id header from frontend proxy
+    user_id_from_header = request.headers.get("X-User-Id")
+
+    if user_id_from_header:
+        logger.info(f"Found user ID in header: {user_id_from_header}")
+        try:
+            user_id = UUID(user_id_from_header)
+            result = await db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+
+            if user:
+                logger.info(f"Using user from header: {user.email}")
+                return user
+            else:
+                logger.warning(f"User ID {user_id_from_header} from header not found in database")
+        except (ValueError, Exception) as e:
+            logger.error(f"Error parsing user ID from header: {e}")
+
+    # Fallback: check session (for direct backend access)
     user_id_str = session_manager.get_session(request, "user_id")
 
-    # If user has session, return authenticated user
     if user_id_str:
         try:
             user_id = UUID(user_id_str)
@@ -110,6 +128,7 @@ async def get_current_user_or_guest(request: Request, db: AsyncSession = Depends
     # Create new guest user
     import uuid
     guest_uuid = uuid.uuid4()
+    logger.info(f"Creating new guest user: {guest_uuid}")
     guest_user = User(
         id=guest_uuid,
         email=f"guest_{guest_uuid}@aegis.local",
@@ -175,10 +194,84 @@ async def stream_chat_response(
                     "content": content_parts if len(content_parts) > 1 else content_parts[0].get("text", "")
                 })
 
-        # Add system message
+        # Add system message with cybersecurity context
+        system_prompt = """You are Aegis AI, an advanced Large Language Model (LLM)-powered autonomous cybersecurity agent developed for an academic research project in Intelligent Systems.
+
+Your mission is to assist organizations in:
+- Detecting and analyzing cybersecurity threats
+- Diagnosing system anomalies from logs and telemetry
+- Correlating intelligence from Cyber Threat Intelligence (CTI) sources
+- Supporting incident response and remediation
+- Improving overall security posture through proactive defense
+- Predicting potential attack vectors based on observed patterns
+
+You operate as an autonomous reasoning agent capable of:
+- Planning multi-step investigative workflows
+- Executing structured analysis
+- Collaborating with other specialized agents in a multi-agent system
+- Producing interpretable and explainable security assessments
+
+---
+
+### Core Capabilities
+You can:
+- Analyze structured and unstructured system logs
+- Identify Indicators of Compromise (IOCs)
+- Classify attack patterns using the MITRE ATT&CK framework
+- Assess threat severity using the levels: Critical, High, Medium, Low, Info
+- Generate actionable incident response recommendations
+- Suggest preventive controls and defensive improvements
+- Support automated and human-in-the-loop decision making
+
+---
+
+### Reasoning & Analysis Guidelines
+When analyzing cybersecurity incidents or security data:
+
+1. Perform step-by-step reasoning and structured investigation
+2. Correlate multiple evidence sources before forming conclusions
+3. Clearly explain findings and assumptions
+4. Assign appropriate severity levels
+5. Reference MITRE ATT&CK techniques and tactics when applicable
+6. Propose remediation steps and long-term defensive strategies
+7. Highlight uncertainties, limitations, and confidence levels
+
+---
+
+### Multi-Agent Collaboration
+In a multi-agent environment:
+- Actively coordinate with other agents (e.g., Log Analysis Agent, CTI Agent, Forensics Agent, Planning Agent)
+- Share intermediate findings clearly and concisely
+- Build upon results from other agents
+- Resolve conflicting evidence logically
+- Work collaboratively to achieve the system's mission
+
+---
+
+### Communication Style
+- Maintain a professional, technical, and security-focused tone
+- Be concise, precise, and actionable
+- Avoid unnecessary verbosity
+- Provide structured outputs using headings, bullet points, tables, and severity labels
+
+---
+
+### General Task Handling
+When asked to write, generate, or help with content:
+- Complete the task directly and efficiently
+- Do not ask clarifying questions unless absolutely necessary
+- Make reasonable assumptions and proceed autonomously
+
+---
+
+### Ethical & Safety Considerations
+- Do not provide instructions for illegal activities or real-world cyber attacks
+- Emphasize ethical cybersecurity practices, responsible disclosure, and compliance
+- Focus on defensive, analytical, and educational objectives only"""
+
         system_message = {
             "role": "system",
-            "content": "You are a helpful AI assistant."
+            "content": system_prompt
         }
         messages.insert(0, system_message)
         logger.info(f"Total messages after system prompt: {len(messages)}")
@@ -193,15 +286,6 @@ async def stream_chat_response(
         # Generate message ID upfront
         import uuid
         message_id = str(uuid.uuid4())
-
-        # Send message creation event first (AI SDK expects this)
-        message_annotation = {
-            "id": message_id,
-            "role": "assistant",
-            "content": [],
-            "createdAt": datetime.utcnow().isoformat()
-        }
-        yield f"2:{json.dumps(message_annotation)}\n"
 
         full_content = ""
         chunk_count = 0
@@ -222,24 +306,30 @@ async def stream_chat_response(
                 if content:
                     # Send text-start event on first chunk
                     if not text_started:
-                        start_event = {"type": "text-start", "id": "t1"}
-                        yield f"0:{json.dumps(start_event)}\n"
+                        text_start_event = {
+                            "type": "text-start",
+                            "id": message_id
+                        }
+                        yield f"data: {json.dumps(text_start_event)}\n\n"
                         text_started = True
 
                     full_content += content
 
-                    # Stream in AI SDK format (text-delta event with id)
+                    # Stream text delta in SSE format
                     event_data = {
                         "type": "text-delta",
-                        "id": "t1",
+                        "id": message_id,
                         "delta": content
                     }
-                    yield f"0:{json.dumps(event_data)}\n"
+                    yield f"data: {json.dumps(event_data)}\n\n"
 
         # Send text-end event
         if text_started:
-            end_event = {"type": "text-end", "id": "t1"}
-            yield f"0:{json.dumps(end_event)}\n"
+            text_end_event = {
+                "type": "text-end",
+                "id": message_id
+            }
+            yield f"data: {json.dumps(text_end_event)}\n\n"
 
         logger.info(f"Streaming complete. Processed {chunk_count} chunks, total content length: {len(full_content)}")
 
@@ -279,16 +369,22 @@ async def stream_chat_response(
                 await db.commit()
                 logger.info(f"Updated chat title to: {title}")
 
-        # Send finish event in AI SDK format
+        # Send finish event and DONE marker
         finish_event = {
             "type": "finish",
+            "id": message_id,
             "finishReason": "stop",
             "usage": {
                 "promptTokens": 0,
                 "completionTokens": len(full_content.split())
             }
         }
-        yield f"d:{json.dumps(finish_event)}\n"
+        # yield f"data: {json.dumps(finish_event)}\n\n"
+        # yield f"data: [DONE]\n\n"
+        yield json.dumps(finish_event) + "\n"
+        yield json.dumps({"type": "done"}) + "\n"
+        return
+
 
     except Exception as e:
         logger.error(f"Error in stream_chat_response: {type(e).__name__}: {str(e)}", exc_info=True)
@@ -296,7 +392,13 @@ async def stream_chat_response(
             "type": "error",
             "error": str(e)
         }
-        yield f"3:{json.dumps(error_event)}\n"
+        # yield f"data: {json.dumps(error_event)}\n\n"
+        # yield f"data: [DONE]\n\n"
+        yield json.dumps(error_event) + "\n"
+        yield json.dumps({"type": "done"}) + "\n"
+        return
+
+        
 
 
 @router.post("")
@@ -368,16 +470,15 @@ async def chat(
         db.add(message)
         await db.commit()
 
-    # Return streaming response with guest cookie if user is a guest
-    # AI SDK expects text/plain not text/event-stream
+    # Return streaming response in SSE format with AI SDK headers
     response = StreamingResponse(
         stream_chat_response(chat_request, chat_id, user, db),
-        media_type="text/plain; charset=utf-8",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-            "X-Vercel-AI-Data-Stream": "v1"
+            "X-Vercel-AI-UI-Message-Stream": "v1"
         }
     )
 

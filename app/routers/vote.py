@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import UUID
@@ -7,7 +7,7 @@ from app.database import get_db
 from app.schemas.chat import VoteRequest, VoteResponse
 from app.models.chat import Vote, Message, Chat
 from app.models.user import User
-from app.routers.chat import get_current_user
+from app.routers.chat import get_current_user, get_current_user_or_guest
 
 router = APIRouter(prefix="/api/vote", tags=["votes"])
 
