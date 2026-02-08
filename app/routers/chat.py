@@ -14,7 +14,7 @@ from app.models.chat import Chat, Message
 from app.models.user import User
 from app.utils.session import session_manager
 from app.config import settings
-from app.ai.gateway_client import claude_client
+from app.ai.gateway_client import gateway_client
 
 import logging
 
@@ -51,7 +51,7 @@ async def generate_chat_title(user_message_text: str) -> str:
         ]
 
         full_title = ""
-        async for chunk in claude_client.stream_chat_completion(
+        async for chunk in gateway_client.stream_chat_completion(
             model=settings.default_title_model,
             messages=messages,
             temperature=0.7
@@ -214,7 +214,7 @@ You operate as an autonomous reasoning agent capable of:
 ---
 
 ### Core Capabilities
-You can:
+You should:
 - Analyze structured and unstructured system logs
 - Identify Indicators of Compromise (IOCs)
 - Classify attack patterns using the MITRE ATT&CK framework
@@ -291,7 +291,7 @@ When asked to write, generate, or help with content:
         chunk_count = 0
         text_started = False
 
-        async for chunk in claude_client.stream_chat_completion(
+        async for chunk in gateway_client.stream_chat_completion(
             model=model,
             messages=messages,
             temperature=0.7

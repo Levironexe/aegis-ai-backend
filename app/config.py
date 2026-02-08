@@ -44,8 +44,10 @@ class Settings(BaseSettings):
     default_artifact_model: str = "claude-haiku-4-5"
 
     # Agent Settings
-    max_tool_steps: int = 5
-    thinking_budget_tokens: int = 10000
+    agent_enabled: bool = True  # Enable/disable LangGraph agent
+    agent_model: str = "claude-haiku-4-5"  # Model for agent reasoning (Haiku 4.5 is fast and cost-effective)
+    max_tool_steps: int = 5  # Maximum number of tool execution iterations
+    thinking_budget_tokens: int = 10000  # Token budget for extended thinking
 
     # Redis (optional, for future use)
     redis_url: str = ""

@@ -1,114 +1,77 @@
-"""
-Claude AI Client
-Direct integration with Anthropic's Claude API
-"""
+# app/ai/gateway_client.py
+
 import logging
-from typing import AsyncGenerator, List, Dict, Any
-from anthropic import AsyncAnthropic
-from app.config import settings
+from app.ai.llms.claude_client import ClaudeClient
+from app.ai.llms.gemini_client import GeminiClient
+from app.ai.langgraph_agent import LangGraphAgent
+from app.tools.example_ioc_tool import ExampleIOCTool
 
 logger = logging.getLogger(__name__)
 
 
-class ClaudeClient:
-    """Client for Anthropic Claude API with streaming support"""
+class GatewayClient:
+    def __init__(self):
+        self.claude = ClaudeClient()
+        self.gemini = GeminiClient()
 
-    def __init__(self, api_key: str = None):
-        # Anthropic API key
-        self.api_key = api_key or settings.anthropic_api_key or settings.ai_gateway_api_key
-        if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY is required")
+        # Initialize LangGraph agent with example tools
+        self.agent = LangGraphAgent()
+        example_tool = ExampleIOCTool()
+        self.agent.register_tools([example_tool.to_langchain_tool()])
 
-        # Create Anthropic async client
-        self.client = AsyncAnthropic(api_key=self.api_key)
+        logger.info("Gateway initialized with Claude, Gemini, and LangGraph agent")
 
-    async def stream_chat_completion(
-        self,
-        model: str,
-        messages: List[Dict[str, Any]],
-        temperature: float = 0.7,
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Stream chat completion from Claude
+    def get_client(self, model: str):
+        m = model.lower().strip()
 
-        Args:
-            model: Model name (e.g., "claude-haiku-4-5", "claude-haiku-4-5", "claude-opus-4-6")
-            messages: List of message dicts with "role" and "content"
-            temperature: Sampling temperature
+        if "/" in m:
+            provider, _ = m.split("/", 1)
+        else:
+            provider = m
 
-        Yields:
-            Chunks in OpenAI-compatible format for consistency
-        """
+        # Route agent requests to LangGraph agent
+        if provider == "agent":
+            return self.agent
 
-        # Strip provider prefix if present (e.g., "anthropic/claude-3-5-sonnet-20241022" -> "claude-3-5-sonnet-20241022")
-        if "/" in model:
-            model = model.split("/", 1)[1]
+        if provider in ("anthropic", "claude"):
+            return self.claude
 
-        # Map common model names to Claude API names (2025 models)
-        model_mapping = {
-            "claude-haiku-4.5": "claude-haiku-4-5",
-            "claude-sonnet-4.5": "claude-haiku-4-5",
-            "claude-opus-4.5": "claude-opus-4-6",
-            # Legacy mappings
-            "claude-3-5-haiku-20241022": "claude-haiku-4-5",
-            "claude-3-5-sonnet-20241022": "claude-haiku-4-5",
-        }
-        claude_model = model_mapping.get(model, model)
+        if provider in ("google", "gemini"):
+            return self.gemini
 
-        logger.info(f"Streaming from Claude: model={claude_model}, messages={len(messages)}")
+        if provider in ("openai", "gpt"):
+            return self.openai
 
-        try:
-            # Convert messages to Claude format
-            claude_messages = []
-            system_message = None
-
-            for msg in messages:
-                role = msg.get("role")
-                content = msg.get("content", "")
-
-                # Handle content as string or list
-                if isinstance(content, list):
-                    # Extract text from content parts
-                    text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
-                    content = " ".join(text_parts)
-
-                # Separate system messages
-                if role == "system":
-                    system_message = content
-                elif role in ["user", "assistant"]:
-                    claude_messages.append({
-                        "role": role,
-                        "content": content
-                    })
-
-            # Stream response from Claude
-            stream = await self.client.messages.create(
-                model=claude_model,
-                max_tokens=4096,
-                temperature=temperature,
-                system=system_message if system_message else "You are a helpful AI assistant.",
-                messages=claude_messages,
-                stream=True
-            )
-
-            # Yield chunks in OpenAI-compatible format
-            async for event in stream:
-                if event.type == "content_block_delta":
-                    if hasattr(event.delta, 'text'):
-                        yield {
-                            "choices": [{
-                                "delta": {
-                                    "content": event.delta.text
-                                }
-                            }]
-                        }
-
-            logger.info("Claude streaming complete")
-
-        except Exception as e:
-            logger.error(f"Claude streaming error: {type(e).__name__}: {str(e)}", exc_info=True)
-            raise
+        raise ValueError(f"Unsupported model: {model}")
 
 
-# Singleton instance
-claude_client = ClaudeClient()
+    async def stream_chat_completion(self, model, messages, **kwargs):
+        m = model.lower().strip()
+
+        if "/" in m:
+            provider, raw_model = m.split("/", 1)
+        else:
+            provider = m
+            raw_model = model
+
+        client = self.get_client(model)
+
+        async for chunk in client.stream_chat_completion(
+            model=raw_model,
+            messages=messages,
+            **kwargs
+        ):
+            yield chunk
+
+
+    async def chat_completion(self, model, messages, **kwargs):
+        client = self.get_client(model)
+        return await client.chat_completion(
+            model=model,
+            messages=messages,
+            **kwargs
+        )
+
+
+# Singleton gateway instance
+gateway_client = GatewayClient()

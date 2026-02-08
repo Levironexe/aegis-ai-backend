@@ -1,15 +1,11 @@
-"""AI Tools Package - Agent tools for document creation, weather, etc."""
+"""AI Tools Package - Agent tools for cybersecurity investigations"""
 
 from .base import BaseTool
 from .weather import WeatherTool
-from .create_document import CreateDocumentTool
-from .update_document import UpdateDocumentTool
-from .request_suggestions import RequestSuggestionsTool
+from .example_ioc_tool import ExampleIOCTool
 
 __all__ = [
     "BaseTool",
     "WeatherTool",
-    "CreateDocumentTool",
-    "UpdateDocumentTool",
-    "RequestSuggestionsTool",
+    "ExampleIOCTool",
 ]
