@@ -11,11 +11,12 @@ class ClaudeClient:
     def __init__(self, api_key: str = None):
         # Anthropic API key
         self.api_key = api_key or settings.anthropic_api_key or settings.ai_gateway_api_key
-        if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY or AI_GATEWAY_API_KEY is required")
 
-        # Create Anthropic async client
-        self.client = AsyncAnthropic(api_key=self.api_key)
+        # Create Anthropic async client (will raise error when actually used if key is missing)
+        self.client = AsyncAnthropic(api_key=self.api_key) if self.api_key else None
+
+        if not self.api_key:
+            logger.warning("ANTHROPIC_API_KEY not configured - Claude client will fail if used")
 
     async def stream_chat_completion(
         self,

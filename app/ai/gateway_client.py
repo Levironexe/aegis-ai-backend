@@ -11,15 +11,35 @@ logger = logging.getLogger(__name__)
 
 class GatewayClient:
     def __init__(self):
-        self.claude = ClaudeClient()
-        self.gemini = GeminiClient()
+        # Use lazy initialization - clients created only when needed
+        self._claude = None
+        self._gemini = None
+        self._agent = None
 
-        # Initialize LangGraph agent with example tools
-        self.agent = LangGraphAgent()
-        example_tool = ExampleIOCTool()
-        self.agent.register_tools([example_tool.to_langchain_tool()])
+        logger.info("Gateway initialized (lazy loading enabled)")
 
-        logger.info("Gateway initialized with Claude, Gemini, and LangGraph agent")
+    @property
+    def claude(self):
+        """Lazy load Claude client"""
+        if self._claude is None:
+            self._claude = ClaudeClient()
+        return self._claude
+
+    @property
+    def gemini(self):
+        """Lazy load Gemini client"""
+        if self._gemini is None:
+            self._gemini = GeminiClient()
+        return self._gemini
+
+    @property
+    def agent(self):
+        """Lazy load LangGraph agent"""
+        if self._agent is None:
+            self._agent = LangGraphAgent()
+            example_tool = ExampleIOCTool()
+            self._agent.register_tools([example_tool.to_langchain_tool()])
+        return self._agent
 
     def get_client(self, model: str):
         m = model.lower().strip()

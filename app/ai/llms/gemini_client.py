@@ -11,11 +11,12 @@ class GeminiClient:
     def __init__(self, api_key: str = None):
         # Google Gemini API key
         self.api_key = api_key or settings.google_api_key or settings.ai_gateway_api_key
-        if not self.api_key:
-            raise ValueError("GOOGLE_GEMINI_API_KEY or AI_GATEWAY_API_KEY is required")
 
-        # Configure Google Generative AI
-        genai.configure(api_key=self.api_key)
+        # Configure Google Generative AI (will fail when actually used if key is missing)
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
+        else:
+            logger.warning("GOOGLE_API_KEY not configured - Gemini client will fail if used")
 
     async def stream_chat_completion(
         self,
