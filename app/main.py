@@ -43,6 +43,11 @@ async def startup():
         print("App will start but database operations will fail until DATABASE_URL is configured")
 
 
+@app.get("/")
+async def root():
+    """Root endpoint"""
+    return {"message": "Aegis AI Backend", "status": "running"}
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
