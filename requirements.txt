@@ -35,7 +35,7 @@ anthropic==0.42.0
 
 # LangChain for advanced AI features
 langchain==0.3.15
-langchain-core==0.3.25
+# langchain-core==0.3.25
 langchain-anthropic==0.3.10
 # langchain-openai==0.2.15
 langchain-google-genai==2.0.8
