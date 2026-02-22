@@ -1,7 +1,121 @@
 services:
+  # FastAPI Backend Web Service
   - type: web
-    name: fastapi-tutorial
+    name: aegis-ai-backend
     runtime: python
-    plan: free # Free tier: 512 MB RAM, spins down after 15 min inactivity
-    buildCommand: "pip install uv && uv sync"
-    startCommand: "uv run uvicorn main:app --host 0.0.0.0 --port $PORT"
+    plan: free
+    region: singapore
+    buildCommand: "pip install --upgrade pip && pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /
+
+    # Environment Variables
+    envVars:
+      # App Configuration
+      - key: APP_NAME
+        value: Aegis AI Backend
+
+      - key: DEBUG
+        value: "false"
+
+      # Security - Generate a new secret key for production!
+      - key: SECRET_KEY
+        generateValue: true
+
+      # Database Connection (automatically set from PostgreSQL database)
+      - key: DATABASE_URL
+        fromDatabase:
+          name: aegis-ai-db
+          property: connectionString
+
+      # Redis Connection (automatically set from Redis service)
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: aegis-ai-redis
+          property: connectionString
+
+      # Google OAuth - Set manually in Render dashboard
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+
+      - key: GOOGLE_REDIRECT_URI
+        value: https://aegis-ai-backend.onrender.com/auth/google/callback
+
+      # Frontend URL - Update after deploying frontend
+      - key: FRONTEND_URL
+        value: https://aegis-ai-frontend.vercel.app
+
+      # AI Gateway API Key - Set manually in dashboard
+      - key: AI_GATEWAY_API_KEY
+        sync: false
+
+      # LLM Provider API Keys - Set manually in dashboard as secrets
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      - key: OPENAI_API_KEY
+        sync: false
+
+      - key: GOOGLE_API_KEY
+        sync: false
+
+      - key: XAI_API_KEY
+        sync: false
+
+      # Rate Limiting Settings
+      - key: GUEST_MESSAGE_LIMIT
+        value: "20"
+
+      - key: REGULAR_USER_MESSAGE_LIMIT
+        value: "50"
+
+      # File Upload Settings
+      - key: MAX_FILE_SIZE_MB
+        value: "5"
+
+      - key: ALLOWED_IMAGE_TYPES
+        value: '["image/jpeg", "image/png"]'
+
+      # Model Configuration
+      - key: DEFAULT_CHAT_MODEL
+        value: "claude/claude-haiku-4-5-20251001"
+
+      - key: DEFAULT_TITLE_MODEL
+        value: "claude/claude-haiku-4-5-20251001"
+
+      - key: DEFAULT_ARTIFACT_MODEL
+        value: "claude/claude-haiku-4-5-20251001"
+
+      # Agent Settings
+      - key: AGENT_ENABLED
+        value: "true"
+
+      - key: AGENT_MODEL
+        value: "claude-haiku-4-5-20251001"
+
+      - key: MAX_TOOL_STEPS
+        value: "5"
+
+      - key: THINKING_BUDGET_TOKENS
+        value: "10000"
+
+  # Redis for Session Management (using keyvalue type)
+  - type: keyvalue
+    name: aegis-ai-redis
+    plan: free
+    region: singapore
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: everywhere
+
+# PostgreSQL Database
+databases:
+  - name: aegis-ai-db
+    databaseName: aegis_db
+    plan: free
+    region: singapore
+    ipAllowList: []
