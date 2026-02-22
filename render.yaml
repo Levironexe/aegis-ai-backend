@@ -26,13 +26,6 @@ services:
       - key: DATABASE_URL
         sync: false
 
-      # Redis Connection (automatically set from Redis service)
-      - key: REDIS_URL
-        fromService:
-          type: keyvalue
-          name: aegis-ai-redis
-          property: connectionString
-
       # Google OAuth - Set manually in Render dashboard
       - key: GOOGLE_CLIENT_ID
         sync: false
@@ -100,13 +93,4 @@ services:
 
       - key: THINKING_BUDGET_TOKENS
         value: "10000"
-
-  # Redis for Session Management (using keyvalue type)
-  - type: keyvalue
-    name: aegis-ai-redis
-    plan: free
-    region: singapore
-    ipAllowList:
-      - source: 0.0.0.0/0
-        description: everywhere
 
