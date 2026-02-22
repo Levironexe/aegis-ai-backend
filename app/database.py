@@ -8,11 +8,13 @@ engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=5,
+    max_overflow=10,
+    pool_timeout=30,  # Timeout after 30 seconds
     connect_args={
         "statement_cache_size": 0,
         "prepared_statement_cache_size": 0,
+        "timeout": 10,  # Connection timeout of 10 seconds
         "server_settings": {
             "jit": "off"  # Improves ENUM handling and reduces overhead
         }
