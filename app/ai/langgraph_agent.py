@@ -80,16 +80,21 @@ class LangGraphAgent:
     def __init__(self):
         """Initialize the agent with LLM and build the investigation graph."""
         # Get model name from settings and map to Anthropic API format
-        model_name = getattr(settings, 'agent_model', 'claude-haiku-4-5')
+        model_name = getattr(settings, 'agent_model', 'claude-haiku-4.5')
 
         # Map friendly names to actual Anthropic API model names
         model_mapping = {
-            "claude-haiku-4.5": "claude-3-5-haiku-20241022",
-            "claude-haiku-4-5": "claude-3-5-haiku-20241022",
+            # Haiku models (4.5 from Oct 2025)
+            "claude-haiku-4.5": "claude-haiku-4-5-20251001",
+            "claude-haiku-4-5": "claude-haiku-4-5-20251001",
+            "claude-haiku": "claude-haiku-4-5-20251001",
+            # Sonnet models (3.5 from Oct 2024)
             "claude-sonnet-4.5": "claude-3-5-sonnet-20241022",
             "claude-sonnet-4-5": "claude-3-5-sonnet-20241022",
-            "claude-opus-4.5": "claude-opus-4-20250514",
-            "claude-opus-4-5": "claude-opus-4-20250514",
+            "claude-sonnet-3.5": "claude-3-5-sonnet-20241022",
+            "claude-sonnet": "claude-3-5-sonnet-20241022",
+            # Fallback to old Claude 3 Haiku if needed
+            "claude-3-haiku": "claude-3-haiku-20240307",
         }
         anthropic_model = model_mapping.get(model_name, model_name)
 
@@ -224,8 +229,8 @@ class LangGraphAgent:
         """
         Node 0: Classification
 
-        Determines if the query is security-related or a general question.
-        This prevents treating every query as a security investigation.
+        Uses LLM to intelligently determine if the query requires a security investigation
+        or is a general/educational question.
 
         Args:
             state: Current investigation state
@@ -236,20 +241,45 @@ class LangGraphAgent:
         messages = state["messages"]
         last_message = messages[-1].content if messages else ""
 
-        # Quick heuristic check first (fast path)
-        security_keywords = [
-            "malware", "virus", "attack", "threat", "suspicious", "breach", "hack",
-            "phishing", "ransomware", "exploit", "vulnerability", "ioc", "indicator",
-            "ip", "domain", "hash", "forensic", "incident", "security", "log",
-            "analyze", "investigate", "detect", "scan", "firewall", "intrusion"
-        ]
+        classification_prompt = """You are a query classifier. Classify the user's query as either "investigation" or "general".
 
-        # If contains security keywords, mark as security query
-        if any(keyword in last_message.lower() for keyword in security_keywords):
+**investigation** = User wants to analyze specific indicators (IP, domain, hash, URL) or investigate concrete security artifacts
+**general** = User asks educational questions (what/why/how), seeks explanations, or general advice
+
+Examples of "investigation":
+- "Analyze IP 45.142.213.100"
+- "Check domain evil.com"
+- "Investigate this hash: abc123..."
+
+Examples of "general":
+- "What is phishing?"
+- "Why should I care about alerts?"
+- "How does malware work?"
+
+Respond with EXACTLY one word: "investigation" or "general"."""
+
+        # Use with_structured_output to force single-word response
+        from pydantic import BaseModel, Field
+
+        class Classification(BaseModel):
+            type: str = Field(description="Either 'investigation' or 'general'")
+
+        structured_llm = self.llm.with_structured_output(Classification)
+
+        result = await structured_llm.ainvoke([
+            SystemMessage(content=classification_prompt),
+            HumanMessage(content=last_message)
+        ])
+
+        classification = result.type.strip().lower()
+
+        # Validate response
+        if "investigation" in classification:
+            logger.info("🔍 LLM classified as: SECURITY INVESTIGATION")
             return {**state, "investigation_steps": ["Classified as security query"]}
-
-        # Otherwise, it's a general query
-        return {**state, "investigation_steps": ["Classified as general query"]}
+        else:
+            logger.info("💬 LLM classified as: GENERAL QUESTION")
+            return {**state, "investigation_steps": ["Classified as general query"]}
 
     async def _simple_response_node(self, state: CyberSecurityState) -> Dict[str, Any]:
         """
@@ -265,11 +295,25 @@ class LangGraphAgent:
         """
         messages = state["messages"]
 
+        # Build tool information for the prompt
+        tool_info = ""
+        if self.tools:
+            tool_list = "\n".join([f"- **{tool.name}**: {tool.description}" for tool in self.tools])
+            tool_info = f"""
+
+**Available Investigation Tools:**
+{tool_list}
+
+**How to use them:**
+Simply provide indicators in your query (e.g., "Analyze IP 45.142.213.100" or "Check domain evil.com") and I'll automatically use the appropriate tools to investigate."""
+
         # Use LLM to respond naturally to general questions
-        simple_prompt = """You are Aegis AI, a cybersecurity assistant.
+        simple_prompt = f"""You are Aegis AI, a cybersecurity assistant.
 
 The user has asked a general question (not related to security investigation).
-Respond naturally and helpfully. If they want cybersecurity help, guide them on what they can ask."""
+Respond naturally and helpfully.{tool_info}
+
+If they want cybersecurity help, mention that you can analyze suspicious indicators like IP addresses, domains, file hashes, and URLs using your investigation tools."""
 
         response = await self.llm.ainvoke([
             SystemMessage(content=simple_prompt),
@@ -353,21 +397,60 @@ Provide a brief, actionable investigation plan."""
 
         # If no tools available, skip this node
         if not self.tools:
-            logger.info("No tools available - proceeding to analysis")
+            logger.warning("⚠️ No tools available - proceeding to analysis")
             return state
 
-        # Bind tools to LLM so it can decide which to call
-        llm_with_tools = self.llm.bind_tools(self.tools)
+        logger.info(f"🔧 Tool selection node: {len(self.tools)} tools available")
+        logger.info(f"   Available tools: {[t.name for t in self.tools]}")
+        logger.info(f"   Tool descriptions: {[(t.name, t.description[:80]) for t in self.tools]}")
 
-        tool_selection_prompt = """Based on the investigation plan, determine which tools would be most helpful.
+        # Check if query contains specific indicators that require tool usage
+        last_message = messages[-1].content if messages else ""
 
-Available tools can help with:
-- IOC analysis (IP addresses, domains, file hashes)
-- MITRE ATT&CK framework mapping
-- Log parsing and analysis
-- Threat intelligence lookups
+        # Patterns that indicate we should force tool usage
+        import re
+        ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+        domain_pattern = r'\b[a-zA-Z0-9][-a-zA-Z0-9]{0,62}(\.[a-zA-Z0-9][-a-zA-Z0-9]{0,62})+\b'
+        hash_pattern = r'\b[a-fA-F0-9]{32,64}\b'
 
-Select appropriate tools or proceed without tools if reasoning alone is sufficient."""
+        has_ip = bool(re.search(ip_pattern, last_message))
+        has_domain = bool(re.search(domain_pattern, last_message)) and not has_ip
+        has_hash = bool(re.search(hash_pattern, last_message))
+
+        requires_tool = has_ip or has_domain or has_hash
+
+        if requires_tool:
+            logger.info(f"   🎯 Detected indicators requiring tool usage (IP: {has_ip}, Domain: {has_domain}, Hash: {has_hash})")
+            # Force tool usage by setting tool_choice to require it
+            llm_with_tools = self.llm.bind_tools(self.tools, tool_choice="any")
+        else:
+            logger.info("   📝 No specific indicators detected - tools optional")
+            # Let LLM decide
+            llm_with_tools = self.llm.bind_tools(self.tools)
+
+        logger.info(f"   LLM bound with tools: {llm_with_tools}")
+
+        tool_selection_prompt = """You are selecting tools for a cybersecurity investigation.
+
+**Available Tools:**
+- `analyze_ioc`: Analyzes IP addresses, domains, file hashes, and URLs for threat intelligence
+
+**Your Task:**
+1. Review the investigation plan in the conversation history
+2. If the query mentions specific indicators (IP, domain, hash, URL), call the `analyze_ioc` tool
+3. If multiple indicators are present, call the tool multiple times (one per indicator)
+
+**CRITICAL RULES:**
+- ALWAYS use tools when specific indicators are mentioned
+- DO NOT just describe what you would do - actually call the tool
+- DO NOT make up tool results - wait for actual tool execution
+
+**Examples:**
+- Query: "Analyze IP 1.2.3.4" → Call analyze_ioc(indicator="1.2.3.4", indicator_type="ip")
+- Query: "Check domain evil.com" → Call analyze_ioc(indicator="evil.com", indicator_type="domain")
+- Query: "What is phishing?" → No tools needed (general question)
+
+Make your tool selection now."""
 
         response = await llm_with_tools.ainvoke([
             SystemMessage(content=tool_selection_prompt),
@@ -377,9 +460,10 @@ Select appropriate tools or proceed without tools if reasoning alone is sufficie
         # Check if tools were called
         tool_calls = getattr(response, 'tool_calls', [])
         if tool_calls:
-            logger.info(f"Tools selected: {[tc['name'] for tc in tool_calls]}")
+            logger.info(f"✅ Tools selected: {[tc['name'] for tc in tool_calls]}")
         else:
-            logger.info("No tools selected - continuing with reasoning")
+            logger.warning("⚠️ No tools selected by LLM - continuing with reasoning only")
+            logger.debug(f"   LLM response: {response.content[:200]}")
 
         return {
             **state,
@@ -451,20 +535,35 @@ Select appropriate tools or proceed without tools if reasoning alone is sufficie
         severity = state.get("severity_level", "medium")
         tools_used = state.get("tools_used", [])
 
-        analysis_prompt = f"""Analyze the investigation results and provide a comprehensive assessment:
+        # Skip analysis if no tools were used (nothing to analyze)
+        if not tools_used:
+            logger.info("⏭️ Skipping analysis node - no tools were used")
+            return state
+
+        analysis_prompt = f"""Analyze the investigation results and provide a comprehensive assessment.
+
+**IMPORTANT:** Start your response with the heading "# 📊 Threat Analysis\n\n" followed by your analysis.
 
 **Investigation Context:**
 - Severity Level: {severity}
 - IOCs Detected: {len(iocs)}
 - Tools Used: {', '.join(tools_used) if tools_used else 'None (reasoning-only)'}
 
-**Your Analysis Should Include:**
-1. Key Findings Summary (what was discovered?)
-2. MITRE ATT&CK Tactics/Techniques (if applicable)
-3. Threat Assessment (confidence level, potential impact)
-4. Recommended Actions (immediate steps, further investigation needed)
+**CRITICAL INSTRUCTION:**
+Review the tool results in the conversation history above. The tool outputs contain actual threat intelligence data including:
+- Reputation scores
+- Threat categories
+- Geolocation information
+- WHOIS data
+- Recommendations
 
-Be specific and reference evidence from the investigation."""
+**Your Analysis MUST:**
+1. **Reference specific data from tool results** (reputation scores, threat levels, categories)
+2. **Map findings to MITRE ATT&CK** tactics/techniques (based on threat categories in tool output)
+3. **Provide threat assessment** using the data from tools (not speculation)
+4. **Give actionable recommendations** based on the tool's recommendations
+
+Do NOT speculate or make up information. Use ONLY the data provided by the tools above."""
 
         response = await self.llm.ainvoke([
             SystemMessage(content=analysis_prompt),
@@ -526,13 +625,16 @@ Be specific and reference evidence from the investigation."""
         iocs = state.get("iocs_found", [])
         tools_used = state.get("tools_used", [])
 
-        response_prompt = f"""Generate a final cybersecurity investigation report based on the analysis.
+        # Use different prompt based on whether tools were used
+        if tools_used:
+            # Formal investigation report when tools were used
+            response_prompt = f"""Generate a final cybersecurity investigation report based on the analysis.
 
 **Investigation Summary:**
 - Severity: {severity.upper()}
 - MITRE ATT&CK Tactics: {', '.join(mitre) if mitre else 'None identified'}
 - IOCs Detected: {len(iocs)}
-- Tools Used: {', '.join(tools_used) if tools_used else 'Reasoning-only analysis'}
+- Tools Used: {', '.join(tools_used)}
 
 **Format Requirements:**
 - Clear, professional tone suitable for a SOC analyst
@@ -540,7 +642,19 @@ Be specific and reference evidence from the investigation."""
 - Actionable recommendations
 - Reference specific evidence
 
-Generate the final report now."""
+Start your response with "# 📋 Investigation Report\n\n" followed by the report."""
+        else:
+            # More conversational response when no tools were used
+            response_prompt = """Based on the investigation planning above, provide helpful guidance to the user.
+
+**Your Response Should:**
+- Be conversational and natural (not a formal report)
+- Acknowledge what information is needed to investigate further
+- Provide actionable next steps for the user
+- Explain what you would do if specific indicators were provided
+- Be concise and helpful
+
+Do NOT use rigid templates or empty sections. Just have a natural conversation about their query."""
 
         final_response = await self.llm.ainvoke([
             SystemMessage(content=response_prompt),
@@ -586,9 +700,17 @@ Generate the final report now."""
         """
         last_message = state["messages"][-1]
 
+        logger.info("🔍 Checking if tools should be used:")
+        logger.info(f"   Last message type: {type(last_message)}")
+        logger.info(f"   Has tool_calls attribute: {hasattr(last_message, 'tool_calls')}")
+
         # Check if LLM requested tool calls
         if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+            logger.info(f"   ✅ Tool calls found: {[tc.get('name') if isinstance(tc, dict) else tc['name'] for tc in last_message.tool_calls]}")
             return "execute"
+
+        logger.warning("   ❌ No tool calls found - skipping to analysis")
+        logger.debug(f"   Message content preview: {last_message.content[:200] if hasattr(last_message, 'content') else 'N/A'}")
         return "skip"
 
     def _continue_investigation(self, state: CyberSecurityState) -> Literal["continue", "analyze"]:
@@ -653,6 +775,9 @@ Generate the final report now."""
                 print(chunk)
         """
         logger.info(f"Starting LangGraph agent execution with {len(messages)} messages")
+
+        # Reset tool header flag for this new request
+        self._tool_header_shown = False
 
         # Debug: log the messages structure
         logger.debug(f"Received messages: {messages}")
@@ -766,22 +891,49 @@ Generate the final report now."""
         if event_type == "on_chat_model_stream":
             chunk = data.get("chunk")
             if chunk and hasattr(chunk, 'content') and chunk.content:
+                # Skip raw tool_use blocks (these are internal LLM tool calling metadata)
+                content = chunk.content
+
+                # Filter out tool_use blocks which appear as lists or dicts
+                if isinstance(content, (list, dict)):
+                    # Don't stream raw tool metadata to users
+                    return
+
+                # Filter out JSON-like tool_use strings
+                if isinstance(content, str) and (
+                    "'type': 'tool_use'" in content or
+                    '"type": "tool_use"' in content or
+                    content.strip().startswith("[{")
+                ):
+                    return
+
                 yield {
                     "choices": [{
                         "delta": {
-                            "content": chunk.content
+                            "content": content
                         }
                     }]
                 }
 
         # Stream tool execution updates
         elif event_type == "on_tool_start":
+            # Add "Tool Selection" header before first tool (only once)
+            if not hasattr(self, '_tool_header_shown'):
+                self._tool_header_shown = True
+                yield {
+                    "choices": [{
+                        "delta": {
+                            "content": "\n\n# 🛠️ Tool Selection\n\n"
+                        }
+                    }]
+                }
+
             tool_input = data.get("input", {})
             tool_name = tool_input.get("name", name)
             yield {
                 "choices": [{
                     "delta": {
-                        "content": f"\n\n🔧 **Using tool**: `{tool_name}`\n"
+                        "content": f"🔧 **Using tool**: `{tool_name}`\n"
                     }
                 }]
             }
@@ -797,7 +949,7 @@ Generate the final report now."""
 
         # Stream node transitions (investigation progress indicators)
         elif event_type == "on_chain_start":
-            # Add headers for major investigation phases
+            # Only add header for planning phase - other nodes will add headers only when they have content
             if "planning" in name.lower():
                 yield {
                     "choices": [{
@@ -806,27 +958,5 @@ Generate the final report now."""
                         }
                     }]
                 }
-            elif "tool_selection" in name.lower():
-                yield {
-                    "choices": [{
-                        "delta": {
-                            "content": "\n\n# 🛠️ Tool Selection\n\n"
-                        }
-                    }]
-                }
-            elif "analysis" in name.lower():
-                yield {
-                    "choices": [{
-                        "delta": {
-                            "content": "\n\n# 📊 Threat Analysis\n\n"
-                        }
-                    }]
-                }
-            elif "response" in name.lower():
-                yield {
-                    "choices": [{
-                        "delta": {
-                            "content": "\n\n# 📋 Investigation Report\n\n"
-                        }
-                    }]
-                }
+            # Don't add headers for tool_selection, analysis, or response nodes
+            # They will handle their own headers when they have content to show

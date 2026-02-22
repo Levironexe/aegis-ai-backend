@@ -313,13 +313,15 @@ When asked to write, generate, or help with content:
                         yield f"data: {json.dumps(text_start_event)}\n\n"
                         text_started = True
 
-                    full_content += content
+                    # Handle content that might be a list or string
+                    content_str = content if isinstance(content, str) else str(content)
+                    full_content += content_str
 
                     # Stream text delta in SSE format
                     event_data = {
                         "type": "text-delta",
                         "id": message_id,
-                        "delta": content
+                        "delta": content_str
                     }
                     yield f"data: {json.dumps(event_data)}\n\n"
 

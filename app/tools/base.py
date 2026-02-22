@@ -34,7 +34,7 @@ class BaseTool(ABC):
         from langchain_core.tools import StructuredTool
 
         return StructuredTool.from_function(
-            func=self.execute,
+            coroutine=self.execute,  # Use coroutine for async functions
             name=self.name,
             description=self.description,
             args_schema=self.input_schema,
