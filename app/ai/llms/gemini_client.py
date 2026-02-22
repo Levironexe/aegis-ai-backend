@@ -1,6 +1,6 @@
 import logging
 from typing import AsyncGenerator, List, Dict, Any
-from google import genai
+import google.generativeai as genai
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,8 @@ class GeminiClient:
         if not self.api_key:
             raise ValueError("GOOGLE_GEMINI_API_KEY or AI_GATEWAY_API_KEY is required")
 
-        # Create Google client
-        self.client = genai.Client(api_key=self.api_key)
+        # Configure Google Generative AI
+        genai.configure(api_key=self.api_key)
 
     async def stream_chat_completion(
         self,
@@ -51,13 +51,17 @@ class GeminiClient:
             })
 
         try:
-            stream = self.client.models.generate_content_stream(
-                model=model,
+            # Create model instance
+            gemini_model = genai.GenerativeModel(model)
+
+            # Generate content stream
+            stream = gemini_model.generate_content(
                 contents=contents,
-                config={
+                generation_config={
                     "temperature": temperature,
                     "max_output_tokens": 4096,
                 },
+                stream=True,
             )
 
             for chunk in stream:
