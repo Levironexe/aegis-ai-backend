@@ -70,7 +70,11 @@ class GoogleAuthService:
 
         async with httpx.AsyncClient() as client:
             response = await client.post(cls.TOKEN_URL, data=data)
-            response.raise_for_status()
+
+            if response.status_code != 200:
+                error_body = response.text
+                raise Exception(f"Google token exchange failed ({response.status_code}): {error_body}")
+
             token_data = response.json()
 
         return GoogleTokenResponse(**token_data)

@@ -96,7 +96,13 @@ async def google_callback(
         return RedirectResponse(url=redirect_url)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Authentication failed: {str(e)}")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Google OAuth callback error: {type(e).__name__}: {str(e)}", exc_info=True)
+
+        # Get more detailed error message
+        error_detail = str(e) if str(e) else f"{type(e).__name__}: {repr(e)}"
+        raise HTTPException(status_code=500, detail=f"Authentication failed: {error_detail}")
 
 
 @router.post("/establish-session", response_model=EstablishSessionResponse)
