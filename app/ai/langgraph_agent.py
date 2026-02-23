@@ -820,10 +820,10 @@ Do NOT use rigid templates or empty sections. Just have a natural conversation a
                                     # Convert to base64 string
                                     base64_str = base64.b64encode(image_data).decode("utf-8")
 
-                                    # LangChain ChatAnthropic expects just the base64 string with image_url type
+                                    # LangChain ChatAnthropic expects image_url dict with data URI
                                     lc_content.append({
                                         "type": "image_url",
-                                        "image_url": base64_str  # Just the base64 string, not a dict
+                                        "image_url": {"url": f"data:{media_type};base64,{base64_str}"}
                                     })
                                     logger.info(f"[LangGraph] Successfully converted image to base64, size: {len(image_data)} bytes")
                             except Exception as e:
