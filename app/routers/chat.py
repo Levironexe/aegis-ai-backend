@@ -187,11 +187,19 @@ async def stream_chat_response(
                     content_parts.append({"type": "text", "text": part.text})
                 elif part.type == "image" and part.image:
                     content_parts.append({"type": "image_url", "image_url": {"url": part.image}})
+                elif part.type == "file" and part.url:
+                    # Handle file attachments - check if it's an image by mediaType
+                    if part.mediaType and part.mediaType.startswith("image"):
+                        content_parts.append({"type": "image_url", "image_url": {"url": part.url}})
+                    else:
+                        # For non-image files, just mention the filename in text
+                        content_parts.append({"type": "text", "text": f"[File: {part.name or 'attachment'}]"})
 
             if content_parts:
+                # Always use array format for multimodal support
                 messages.append({
                     "role": msg.role,
-                    "content": content_parts if len(content_parts) > 1 else content_parts[0].get("text", "")
+                    "content": content_parts
                 })
 
         # Add system message with cybersecurity context

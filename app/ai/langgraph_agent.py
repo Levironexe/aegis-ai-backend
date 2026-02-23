@@ -16,6 +16,8 @@ returning OpenAI-compatible SSE chunks for seamless frontend integration.
 """
 
 import logging
+import base64
+import httpx
 from typing import AsyncGenerator, List, Dict, Any, Literal, TypedDict, Annotated, Sequence
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
@@ -788,10 +790,61 @@ Do NOT use rigid templates or empty sections. Just have a natural conversation a
             role = msg.get("role")
             content = msg.get("content", "")
 
-            # Handle content as list (multimodal support)
+            # Handle content as list (multimodal support) - LANGCHAIN FORMAT
             if isinstance(content, list):
-                text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
-                content = " ".join(text_parts)
+                # Convert to LangChain's multimodal format (NOT raw Anthropic API format)
+                lc_content = []
+                for part in content:
+                    if part.get("type") == "text":
+                        lc_content.append({
+                            "type": "text",
+                            "text": part.get("text", "")
+                        })
+                    elif part.get("type") == "image_url":
+                        # LangChain expects image_url format (OpenAI-style)
+                        image_url = part.get("image_url", {}).get("url", "")
+                        logger.info(f"[LangGraph] Processing image URL: {image_url}")
+                        if image_url:
+                            # For non-HTTPS URLs, fetch and convert to base64 data URI
+                            if not image_url.startswith("https://"):
+                                try:
+                                    logger.info(f"[LangGraph] Fetching HTTP image: {image_url}")
+                                    async with httpx.AsyncClient() as http_client:
+                                        response = await http_client.get(image_url)
+                                        response.raise_for_status()
+                                        image_data = response.content
+
+                                        # Detect media type from response headers or URL
+                                        media_type = response.headers.get("content-type", "image/png")
+                                        if not media_type.startswith("image/"):
+                                            media_type = "image/png"
+
+                                        # Convert to base64 data URI
+                                        base64_data = base64.b64encode(image_data).decode("utf-8")
+                                        data_uri = f"data:{media_type};base64,{base64_data}"
+
+                                        # Use LangChain's image_url format with data URI
+                                        lc_content.append({
+                                            "type": "image_url",
+                                            "image_url": {
+                                                "url": data_uri
+                                            }
+                                        })
+                                        logger.info(f"[LangGraph] Successfully converted image to base64, size: {len(image_data)} bytes")
+                                except Exception as e:
+                                    logger.error(f"[LangGraph] Failed to fetch image from {image_url}: {e}")
+                                    # Skip this image if we can't fetch it
+                                    pass
+                            else:
+                                # For HTTPS URLs, use URL directly in LangChain format
+                                logger.info(f"[LangGraph] Using HTTPS URL directly: {image_url}")
+                                lc_content.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": image_url
+                                    }
+                                })
+                content = lc_content if lc_content else ""
 
             # Skip empty messages
             if not content or not role:

@@ -1,4 +1,6 @@
 import logging
+import base64
+import httpx
 from typing import AsyncGenerator, List, Dict, Any
 from anthropic import AsyncAnthropic
 from app.config import settings
@@ -64,18 +66,85 @@ class ClaudeClient:
 
                 # Handle content as string or list
                 if isinstance(content, list):
-                    # Extract text from content parts
-                    text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
-                    content = " ".join(text_parts)
+                    # Convert to Claude's content format
+                    claude_content = []
+                    for part in content:
+                        if part.get("type") == "text":
+                            claude_content.append({
+                                "type": "text",
+                                "text": part.get("text", "")
+                            })
+                        elif part.get("type") == "image_url":
+                            # Claude expects image format
+                            image_url = part.get("image_url", {}).get("url", "")
+                            logger.info(f"Processing image URL: {image_url}")
+                            if image_url:
+                                # For non-HTTPS URLs, fetch and convert to base64
+                                if not image_url.startswith("https://"):
+                                    try:
+                                        logger.info(f"Fetching HTTP image: {image_url}")
+                                        async with httpx.AsyncClient() as http_client:
+                                            response = await http_client.get(image_url)
+                                            response.raise_for_status()
+                                            image_data = response.content
+
+                                            # Detect media type from response headers or URL
+                                            media_type = response.headers.get("content-type", "image/png")
+                                            if not media_type.startswith("image/"):
+                                                media_type = "image/png"
+
+                                            # Convert to base64
+                                            base64_data = base64.b64encode(image_data).decode("utf-8")
+
+                                            claude_content.append({
+                                                "type": "image",
+                                                "source": {
+                                                    "type": "base64",
+                                                    "media_type": media_type,
+                                                    "data": base64_data
+                                                }
+                                            })
+                                            logger.info(f"Successfully converted image to base64, size: {len(image_data)} bytes")
+                                    except Exception as e:
+                                        logger.error(f"Failed to fetch image from {image_url}: {e}")
+                                        # Skip this image if we can't fetch it
+                                        pass
+                                else:
+                                    # For HTTPS URLs, use URL directly
+                                    logger.info(f"Using HTTPS URL directly: {image_url}")
+                                    claude_content.append({
+                                        "type": "image",
+                                        "source": {
+                                            "type": "url",
+                                            "url": image_url
+                                        }
+                                    })
+                    content = claude_content if claude_content else ""
 
                 # Separate system messages
                 if role == "system":
-                    system_message = content
+                    # System messages must be strings
+                    if isinstance(content, list):
+                        text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
+                        system_message = " ".join(text_parts)
+                    else:
+                        system_message = content
                 elif role in ["user", "assistant"]:
                     claude_messages.append({
                         "role": role,
                         "content": content
                     })
+
+            # Log what we're sending to Claude
+            logger.info(f"Sending {len(claude_messages)} messages to Claude")
+            for i, msg in enumerate(claude_messages):
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    logger.info(f"Message {i}: role={msg.get('role')}, content_parts={len(content)}")
+                    for j, part in enumerate(content):
+                        logger.info(f"  Part {j}: type={part.get('type')}")
+                else:
+                    logger.info(f"Message {i}: role={msg.get('role')}, content_type=str")
 
             # Stream response from Claude
             stream = await self.client.messages.create(

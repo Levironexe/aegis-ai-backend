@@ -7,6 +7,11 @@ class MessagePart(BaseModel):
     type: str
     text: Optional[str] = None
     image: Optional[str] = None
+    # File attachment fields
+    url: Optional[str] = None
+    name: Optional[str] = None
+    mediaType: Optional[str] = None
+    # Tool call fields
     toolCallId: Optional[str] = None
     toolName: Optional[str] = None
     args: Optional[Dict[str, Any]] = None
