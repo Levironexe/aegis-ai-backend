@@ -51,6 +51,28 @@ if isinstance(content, list):
 
 **Impact:** The agent/cyber-analyst model could not process any images.
 
+### 5. Wrong Image Format for LangChain (Critical Issue)
+**Location:** `app/ai/langgraph_agent.py` lines 793-848
+
+**Issue:** Initially used raw Anthropic API format (`{"type": "image", "source": {...}}`) when passing to LangChain's `HumanMessage`. LangChain doesn't understand Anthropic's native format - it expects OpenAI-style `image_url` format and handles the conversion to Anthropic internally.
+
+**Initial (broken) implementation:**
+```python
+# Used Anthropic SDK format directly with LangChain
+claude_content.append({
+    "type": "image",
+    "source": {          # ← LangChain doesn't understand "source"
+        "type": "base64",
+        "media_type": media_type,
+        "data": base64_data
+    }
+})
+lc_messages.append(HumanMessage(content=claude_content))
+# LangChain sees unknown dict types → strips/ignores them → LLM receives no image
+```
+
+**Impact:** Images were formatted but LangChain couldn't process them, so they never reached the LLM.
+
 ---
 
 ## Solutions Implemented
@@ -132,14 +154,41 @@ import base64
 import httpx
 ```
 
-### 4. Implemented Image Processing in LangGraph Agent
-**File:** `app/ai/langgraph_agent.py` lines 793-843
+### 4. Implemented Image Processing in LangGraph Agent (CORRECTED)
+**File:** `app/ai/langgraph_agent.py` lines 793-848
 
-Copied the exact same image processing logic from `claude_client.py` to handle multimodal content:
-- Detects `image_url` parts in message content
-- Fetches HTTP images and converts to base64
-- Uses Claude's image format: `{"type": "image", "source": {...}}`
-- Preserves multimodal content structure for LangChain messages
+**Critical Fix:** Use LangChain's OpenAI-style format, NOT raw Anthropic format.
+
+**For base64 images (HTTP URLs):**
+```python
+# Fetch HTTP image and convert to base64
+base64_data = base64.b64encode(image_data).decode("utf-8")
+data_uri = f"data:{media_type};base64,{base64_data}"
+
+# Use LangChain's image_url format with data URI
+lc_content.append({
+    "type": "image_url",
+    "image_url": {
+        "url": data_uri  # data URI format
+    }
+})
+```
+
+**For HTTPS URLs:**
+```python
+# Use LangChain's image_url format with direct URL
+lc_content.append({
+    "type": "image_url",
+    "image_url": {
+        "url": image_url  # HTTPS URL
+    }
+})
+```
+
+**Why this works:**
+- `claude_client.py` uses raw `AsyncAnthropic` SDK → needs Anthropic format: `{"type": "image", "source": {...}}`
+- `langgraph_agent.py` uses `ChatAnthropic` from LangChain → needs OpenAI-style format: `{"type": "image_url", "image_url": {"url": "..."}}`
+- LangChain's `ChatAnthropic` internally converts the `image_url` format (including data URIs) to Anthropic's API format
 
 **Added imports:**
 ```python
@@ -178,7 +227,11 @@ import httpx
 1. **Frontend-Backend Contract:** Always verify the exact structure being sent from frontend before implementing backend processing
 2. **Multimodal Support:** Always use array format for message content, even for single parts, to maintain consistency
 3. **Local Development Constraints:** Claude API's HTTPS requirement means local development needs base64 conversion for images
-4. **Consistency Across Models:** Both direct Claude API calls and LangGraph agents need identical image processing logic
+4. **Abstraction Layer Formats:**
+   - **Raw Anthropic SDK** (`AsyncAnthropic`): Use `{"type": "image", "source": {...}}`
+   - **LangChain** (`ChatAnthropic`): Use `{"type": "image_url", "image_url": {"url": "..."}}` (OpenAI-style)
+   - LangChain handles the conversion internally - DO NOT mix formats
+5. **Data URIs in LangChain:** LangChain's `ChatAnthropic` accepts data URIs (`data:image/png;base64,...`) in the `image_url.url` field and converts them to Anthropic's base64 format
 
 ---
 

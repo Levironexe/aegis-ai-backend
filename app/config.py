@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     frontend_url: str
 
     # Backend URL (for file uploads)
-    backend_url: str = "http://localhost:8000"
+    backend_url: str = ""
 
     # AI Gateway (for LLM API calls)
     ai_gateway_api_key: str = ""
