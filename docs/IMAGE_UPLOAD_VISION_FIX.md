@@ -155,46 +155,58 @@ import httpx
 ```
 
 ### 4. Implemented Image Processing in LangGraph Agent (CORRECTED)
-**File:** `app/ai/langgraph_agent.py` lines 793-848
+**File:** `app/ai/langgraph_agent.py` lines 803-832
 
-**Critical Fix:** Use LangChain's OpenAI-style format, NOT raw Anthropic format.
+**Critical Fix:** Use LangChain's OpenAI-style format with proper dict structure.
 
-**For base64 images (HTTP URLs):**
+**Initial broken attempt #1:**
+```python
+# Used Anthropic SDK format directly (WRONG for LangChain)
+lc_content.append({
+    "type": "image",
+    "source": {"type": "base64", "media_type": media_type, "data": base64_data}
+})
+# Error: LangChain doesn't understand Anthropic's "source" key
+```
+
+**Initial broken attempt #2:**
+```python
+# Used string instead of dict (WRONG)
+lc_content.append({
+    "type": "image_url",
+    "image_url": base64_str  # ❌ String, not dict
+})
+# Error: "string indices must be integers, not 'str'"
+# Reason: LangChain tries to access image_url["url"] but image_url is a string
+```
+
+**Final working solution:**
 ```python
 # Fetch HTTP image and convert to base64
-base64_data = base64.b64encode(image_data).decode("utf-8")
-data_uri = f"data:{media_type};base64,{base64_data}"
+base64_str = base64.b64encode(image_data).decode("utf-8")
 
-# Use LangChain's image_url format with data URI
+# Use LangChain's image_url format with dict containing data URI
 lc_content.append({
     "type": "image_url",
-    "image_url": {
-        "url": data_uri  # data URI format
-    }
+    "image_url": {"url": f"data:{media_type};base64,{base64_str}"}  # ✅ CORRECT
 })
 ```
 
-**For HTTPS URLs:**
-```python
-# Use LangChain's image_url format with direct URL
-lc_content.append({
-    "type": "image_url",
-    "image_url": {
-        "url": image_url  # HTTPS URL
-    }
-})
-```
-
-**Why this works:**
+**Why this specific format:**
 - `claude_client.py` uses raw `AsyncAnthropic` SDK → needs Anthropic format: `{"type": "image", "source": {...}}`
 - `langgraph_agent.py` uses `ChatAnthropic` from LangChain → needs OpenAI-style format: `{"type": "image_url", "image_url": {"url": "..."}}`
-- LangChain's `ChatAnthropic` internally converts the `image_url` format (including data URIs) to Anthropic's API format
+- The `image_url` value MUST be a dict with a `url` key (not a plain string)
+- LangChain's `ChatAnthropic` internally converts this OpenAI format to Anthropic's API format
 
 **Added imports:**
 ```python
 import base64
 import httpx
 ```
+
+**References:**
+- [LangChain ChatAnthropic Official Docs](https://api.python.langchain.com/en/latest/chat_models/langchain_anthropic.chat_models.ChatAnthropic.html) - Example showing `{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}`
+- [LangChain HumanMessage Multimodal Guide](https://python.langchain.com/api_reference/core/messages/langchain_core.messages.human.HumanMessage.html) - Demonstrates both URL and base64 data URI formats
 
 ---
 
