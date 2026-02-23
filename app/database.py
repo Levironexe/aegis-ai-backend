@@ -1,10 +1,6 @@
-import ssl
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from app.config import settings
-
-# Create SSL context for Supabase pooler (required for TLS)
-ssl_context = ssl.create_default_context()
 
 # Create async engine for PostgreSQL
 # Disable prepared statements for Supabase/PgBouncer compatibility
@@ -16,11 +12,9 @@ engine = create_async_engine(
     max_overflow=10,
     pool_timeout=30,  # Timeout after 30 seconds
     connect_args={
-        "ssl": ssl_context,  # Enable SSL/TLS for Supabase pooler
         "statement_cache_size": 0,
         "prepared_statement_cache_size": 0,
-        "timeout": 30,  # Connection timeout increased to 30 seconds
-        "command_timeout": 30,  # Command timeout for long queries
+        "timeout": 10,  # Connection timeout of 10 seconds
         "server_settings": {
             "jit": "off"  # Improves ENUM handling and reduces overhead
         }
