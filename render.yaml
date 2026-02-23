@@ -34,7 +34,7 @@ services:
         sync: false
 
       - key: GOOGLE_REDIRECT_URI
-        value: https://aegis-ai-backend.onrender.com/auth/google/callback
+        value: https://aegis-ai-backend-yqaf.onrender.com/auth/google/callback
 
       # Frontend URL - Update after deploying frontend
       - key: FRONTEND_URL
