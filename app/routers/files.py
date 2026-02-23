@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User
-from app.routers.chat import get_current_user
+from app.routers.chat import get_current_user, get_current_user_or_guest
 from app.config import settings
 
 router = APIRouter(prefix="/api/files", tags=["files"])
@@ -35,7 +35,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 async def upload_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_guest),
 ):
     """Upload a file"""
 
@@ -97,7 +97,7 @@ async def get_file(filename: str):
 async def delete_file(
     filename: str,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user_or_guest),
 ):
     """Delete an uploaded file"""
 

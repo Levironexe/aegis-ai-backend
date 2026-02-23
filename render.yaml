@@ -38,7 +38,7 @@ services:
 
       # Frontend URL - Update after deploying frontend
       - key: FRONTEND_URL
-        value: https://aegis-ai-frontend.vercel.app
+        value: https://aegis-ai-chat.vercel.app
 
       # AI Gateway API Key - Set manually in dashboard
       - key: AI_GATEWAY_API_KEY
