@@ -46,6 +46,7 @@ class MessageResponse(BaseModel):
     role: str
     parts: List[Dict[str, Any]]
     attachments: List[Dict[str, Any]]
+    provider: Optional[str] = None
     createdAt: datetime
 
     class Config:

@@ -343,12 +343,16 @@ When asked to write, generate, or help with content:
 
         logger.info(f"Streaming complete. Processed {chunk_count} chunks, total content length: {len(full_content)}")
 
+        # Extract provider from model string (e.g., "anthropic/claude-sonnet-4.5" -> "anthropic")
+        provider = model.split("/")[0] if "/" in model else None
+
         # Save assistant message to database
         assistant_message = Message(
             chatId=chat_id,
             role="assistant",
             parts=[{"type": "text", "text": full_content}],
             attachments=[],
+            provider=provider,
             createdAt=datetime.utcnow()
         )
         db.add(assistant_message)

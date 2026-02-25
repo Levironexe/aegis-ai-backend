@@ -3,6 +3,7 @@
 import logging
 from app.ai.llms.claude_client import ClaudeClient
 from app.ai.llms.gemini_client import GeminiClient
+from app.ai.llms.openai_client import OpenAIClient
 from app.ai.langgraph_agent import LangGraphAgent
 from app.tools.example_ioc_tool import ExampleIOCTool
 
@@ -14,6 +15,7 @@ class GatewayClient:
         # Use lazy initialization - clients created only when needed
         self._claude = None
         self._gemini = None
+        self._openai = None
         self._agent = None
 
         logger.info("Gateway initialized (lazy loading enabled)")
@@ -31,6 +33,13 @@ class GatewayClient:
         if self._gemini is None:
             self._gemini = GeminiClient()
         return self._gemini
+
+    @property
+    def openai(self):
+        """Lazy load OpenAI client"""
+        if self._openai is None:
+            self._openai = OpenAIClient()
+        return self._openai
 
     @property
     def agent(self):

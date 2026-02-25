@@ -32,6 +32,7 @@ class Message(Base):
     role = Column(String(20), nullable=False)  # user, assistant, system
     parts = Column(JSON, nullable=False)  # Array of message parts
     attachments = Column(JSON, nullable=False)  # Array of attachments
+    provider = Column(String(20), nullable=True)  # Model provider (anthropic, openai, google, xai)
     createdAt = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     # Relationships
